@@ -1,0 +1,212 @@
+apiVersion: v1
+kind: AuthProxy
+metadata:
+  name: default
+spec:
+  listen: ":7700"
+  special_prefix: "/_"
+  upstreams:
+    - source: https://localhost:7700
+      target: http://app-upstream:8080
+      # https://pl.wikipedia.org
+  transport:
+    disable_http2: true
+  chain:
+  - moduleRef:
+      kind: Audit
+      name: audit
+  - moduleRef:
+      kind: Session
+      name: redis
+  - moduleRef:
+      kind: AuthOIDC
+      name: axes
+  - moduleRef:
+      kind: Enrichment
+      name: dummy
+  - moduleRef:
+      kind: Enrichment
+      name: ldap
+  - moduleRef:
+      kind: Rewriter
+      name: url
+  - moduleRef:
+      kind: CustomHeaders
+      name: cors
+  - moduleRef:
+      kind: IssueSPNEGO
+      name: spnego
+---
+apiVersion: v1
+kind: AuthProxy
+metadata:
+  name: second
+spec:
+  listen: ":7711"
+  special_prefix: "/_"
+  upstreams:
+    - source: https://localhost:7711
+      target: https://docs.python.org
+  chain:
+  - moduleRef:
+      kind: Audit
+      name: audit
+  - moduleRef:
+      kind: Session
+      name: session
+  - moduleRef:
+      kind: AuthOIDC
+      name: axes
+  - moduleRef:
+      kind: Enrichment
+      name: dummy
+  - moduleRef:
+      kind: Enrichment
+      name: ldap
+  - moduleRef:
+      kind: Rewriter
+      name: url
+  - moduleRef:
+      kind: CustomHeaders
+      name: cors
+  - moduleRef:
+      kind: IssueSPNEGO
+      name: spnego
+---
+apiVersion: v1
+kind: Session
+metadata:
+  name: session
+spec:
+  cookie_name: axproxy_session
+  cookie_path: "/"
+  cookie_same_site: Lax
+  max_age_seconds: 86400
+  max_idle_seconds: 10
+---
+apiVersion: v1
+kind: Session
+metadata:
+  name: redis
+spec:
+  cookie_name: axproxy_session
+  cookie_path: "/"
+  cookie_same_site: Lax
+  max_age_seconds: 86400
+  max_idle_seconds: 10
+  driver: redis
+  redis:
+    addr: session-db:6379
+---
+apiVersion: v1
+kind: Audit
+metadata:
+  name: audit
+spec: {}
+---
+apiVersion: v1
+kind: CustomHeaders
+metadata:
+  name: cors
+spec:
+  request:
+    - op: del
+      header: X-Forwarded-For
+  response:
+    - op: set
+      header: Fake-Access-Control-Allow-Origin
+      value: "*"
+---
+apiVersion: v1
+kind: Rewriter
+metadata:
+  name: url
+spec:
+  rewrite:
+    "https://pl.wikipedia.org": "https://localhost:8787"
+    "https://docs.python.org": "https://localhost:8989"
+  headers: true
+  body: true
+---
+apiVersion: v1
+kind: AuthOIDC
+metadata:
+  name: axes
+spec:
+  when:
+    op: empty
+    left: ${session.oidc_subject_id}
+  scope: openid email profile
+  client_id: ${AXES_CLIENT}
+  client_secret: ${AXES_SECRET}
+  jwks_url: http://auth-server:7777/.well-known/jwks.json
+  authorize_url: http://localhost:7777/authorize
+  token_url: http://auth-server:7777/token
+  outputs:
+    - "subject_id"
+    - "access_token"
+  mappings:
+    "state.oidc_subject_id": ${access_token.claims.sub}
+    "session.oidc_subject_id": ${access_token.claims.sub}
+    "session.oidc_claims": ${access_token.claims}
+---
+apiVersion: v1
+kind: Enrichment
+metadata:
+  name: dummy
+spec:
+  when:
+    op: empty
+    left: ${session.dummy_email}
+  sources:
+    - name: dummy
+      type: dummy
+  lookups:
+    - name: email
+      source: dummy
+      inputs:
+        "email": ${session.oidc_claims.preferred_username}
+      outputs:
+        - "email"
+      mappings:
+        "session.dummy_email": ${inputs.email}
+---
+apiVersion: v1
+kind: Enrichment
+metadata:
+  name: ldap
+spec:
+  when:
+    op: empty
+    left: ${session.sAMAccountName}
+  sources:
+    - name: ldap
+      type: ldap
+      ldap:
+        addr: "ldap://samba-ad:389"
+        bind_dn: "Administrator@EXAMPLE.LOCAL"
+        bind_password: "Passw0rd!"
+        base_dn: "CN=Users,DC=example,DC=local"
+        timeout: "10s"
+  lookups:
+    - name: sAMAccountName
+      source: ldap
+      inputs:
+        "employeeNumber": ${session.oidc_subject_id}
+      outputs:
+        - "sAMAccountName"
+      mappings:
+        "session.sAMAccountName": ${sAMAccountName}
+---
+apiVersion: v1
+kind: IssueSPNEGO
+metadata:
+  name: spnego
+spec:
+  inputs:
+    user_principal: ${session.sAMAccountName}
+  issuer:
+    delegate: true
+    negotiate: false
+    credentials_principal: proxy_svc
+    target_principal: HTTP/app_svc.example.local@EXAMPLE.LOCAL

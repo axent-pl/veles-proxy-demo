@@ -1,0 +1,127 @@
+services:
+  samba-ad:
+    build:
+      context: ./services/samba-ad
+      dockerfile: Dockerfile
+    privileged: true
+    environment:
+      - DOMAIN=example.local
+      - REALM=EXAMPLE.LOCAL
+      - DNS_FORWARDER=8.8.8.8
+      - ADMIN_PASSWORD=Passw0rd!
+      - ADMIN_PW=Passw0rd!
+    hostname: samba-ad
+    domainname: example.local
+    dns:
+      - 127.0.0.1
+    networks:
+      default:
+        aliases:
+          - samba-ad
+          - samba-ad.example.local
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/run/provisioning.done"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+    secrets:
+      - samba-admin-password
+    volumes:
+      - ./volumes/vol-keytabs:/keytabs
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+
+  auth-server:
+    image: prond/axes:nightly
+    environment:
+      - SERVER_ADDRESS=:7777
+      - OAUTH2_ISSUER=http://auth-server:7777
+      - OAUTH2_ISSUER_FROM_ORIGIN=FALSE
+    volumes:
+      - ./volumes/vol-axes-config:/app/assets/config
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "7777:7777"
+    networks:
+      - default
+
+  auth-proxy:
+    image: prond/axproxy:0.62.0
+    hostname: auth-proxy  
+    environment:
+      - AXES_CLIENT=ACME
+      - AXES_SECRET=acme-secret
+      - LOG_LEVEL=debug
+      - KRB5_CONFIG=/etc/krb5.conf
+      - KRB5_CLIENT_KTNAME=FILE:/keytabs/proxy_svc.keytab
+      - KRB5_KTNAME=FILE:/keytabs/proxy_svc.keytab
+      - ENV KRB5_TRACE=/dev/stderr
+    volumes:
+      - ./volumes/vol-kerberos-confd/krb5.conf:/etc/krb5.conf:ro
+      - ./volumes/vol-keytabs:/keytabs:ro
+      - ./volumes/vol-axproxy-config:/app/assets/config
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "7700:7700"
+      - "7711:7711"
+    networks:
+      - default
+    depends_on:
+      samba-ad:
+        condition: service_healthy
+      session-db:
+        condition: service_healthy
+        
+  app-upstream:
+    build:
+      context: ./services/app-upstream
+      dockerfile: Dockerfile
+    environment:
+      - SPN=app_svc
+      - KEYTAB=/keytabs/app_svc.keytab
+    volumes:
+      - ./volumes/vol-keytabs:/keytabs:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    networks:
+      - default
+    depends_on:
+      samba-ad:
+        condition: service_healthy
+
+
+  session-db:
+    image: redis:8.0-alpine
+    command: >
+      redis-server
+      --save 900 1
+      --save 300 10
+      --appendonly yes
+      --appendfsync everysec
+    volumes:
+      - ./volumes/vol-session-data:/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+secrets:
+  samba-admin-password:
+    file: ./secrets/samba-admin-password
+
+networks:
+  default:
+    name: veles-proxy-demo
+
+volumes:
+  vol_session_data:
+    driver: local
