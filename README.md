@@ -190,6 +190,21 @@ spec:
     addr: session-db:6379
 ```
 
+### Encryption for persistent session backends
+
+Session data stored in persistent backend (Redis) can be ecrypted to increase security:
+
+```yaml
+apiVersion: v1
+kind: Session
+metadata:
+  name: redis
+spec:
+  encryptor:
+    path: assets/keys/session.key
+    kid: default
+```
+
 ### Header and content rewriting
 
 The demo modifies headers and rewrites URLs:

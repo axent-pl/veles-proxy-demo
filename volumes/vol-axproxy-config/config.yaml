@@ -8,7 +8,6 @@ spec:
   upstreams:
     - source: https://localhost:7700
       target: http://app-upstream:8080
-      # https://pl.wikipedia.org
   transport:
     disable_http2: true
   chain:
@@ -21,12 +20,21 @@ spec:
   - moduleRef:
       kind: AuthOIDC
       name: axes
+    when:
+      op: empty
+      left: ${session.oidc_subject_id}
   - moduleRef:
       kind: Enrichment
       name: dummy
+    when:
+      op: empty
+      left: ${session.dummy_email}
   - moduleRef:
       kind: Enrichment
       name: ldap
+    when:
+      op: empty
+      left: ${session.sAMAccountName}
   - moduleRef:
       kind: Rewriter
       name: url
@@ -46,7 +54,7 @@ spec:
   special_prefix: "/_"
   upstreams:
     - source: https://localhost:7711
-      target: https://docs.python.org
+      target: http://app-upstream:8080
   chain:
   - moduleRef:
       kind: Audit
@@ -57,12 +65,21 @@ spec:
   - moduleRef:
       kind: AuthOIDC
       name: axes
+    when:
+      op: empty
+      left: ${session.oidc_subject_id}
   - moduleRef:
       kind: Enrichment
       name: dummy
+    when:
+      op: empty
+      left: ${session.dummy_email}
   - moduleRef:
       kind: Enrichment
       name: ldap
+    when:
+      op: empty
+      left: ${session.sAMAccountName}
   - moduleRef:
       kind: Rewriter
       name: url
@@ -97,6 +114,9 @@ spec:
   driver: redis
   redis:
     addr: session-db:6379
+  encryptor:
+    path: assets/keys/session.key
+    kid: default
 ---
 apiVersion: v1
 kind: Audit
@@ -133,9 +153,6 @@ kind: AuthOIDC
 metadata:
   name: axes
 spec:
-  when:
-    op: empty
-    left: ${session.oidc_subject_id}
   scope: openid email profile
   client_id: ${AXES_CLIENT}
   client_secret: ${AXES_SECRET}
@@ -155,9 +172,6 @@ kind: Enrichment
 metadata:
   name: dummy
 spec:
-  when:
-    op: empty
-    left: ${session.dummy_email}
   sources:
     - name: dummy
       type: dummy
@@ -176,9 +190,6 @@ kind: Enrichment
 metadata:
   name: ldap
 spec:
-  when:
-    op: empty
-    left: ${session.sAMAccountName}
   sources:
     - name: ldap
       type: ldap

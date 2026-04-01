@@ -48,7 +48,7 @@ services:
       - default
 
   auth-proxy:
-    image: prond/axproxy:0.62.0
+    image: prond/axproxy:1.1.0
     hostname: auth-proxy  
     environment:
       - AXES_CLIENT=ACME
